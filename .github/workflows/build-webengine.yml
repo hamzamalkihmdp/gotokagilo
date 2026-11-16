@@ -28,16 +28,15 @@ jobs:
           choco install winflexbison3 gperf nodejs -y
 
       - name: Clone Qt 6.12.0 Required Modules from Official Git
+        shell: cmd
         run: |
-          $ErrorActionPreference = "Stop"
           mkdir D:\qt6-src
-          $modules = @("qtbase", "qtshadertools", "qtdeclarative", "qtpositioning", "qtwebchannel", "qtwebengine")
-          foreach ($mod in $modules) {
-            $repoUrl = "https://github.com"
-            Write-Host "Cloning $mod (v6.12.0) from $repoUrl ..."
-            git clone --depth 1 --branch v6.12.0 $repoUrl "D:\qt6-src\$($mod)"
-          }
-          cd D:\qt6-src\qtwebengine
+          for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel qtwebengine) do (
+            echo Cloning %%m v6.12.0 ...
+            git clone --depth 1 --branch v6.12.0 https://github.com D:\qt6-src\%%m
+            if errorlevel 1 exit /b 1
+          )
+          cd /d D:\qt6-src\qtwebengine
           git submodule update --init --recursive --depth 1
 
       - name: Build Qt Base Modules and QtWebEngine (Proprietary Codecs)
@@ -60,8 +59,11 @@ jobs:
             ) else (
               call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\%%m -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
             )
+            if errorlevel 1 exit /b 1
             cmake --build . --parallel
+            if errorlevel 1 exit /b 1
             cmake --install .
+            if errorlevel 1 exit /b 1
           )
 
           REM 2. Configure and Build QtWebEngine with Proprietary Codecs
@@ -71,8 +73,11 @@ jobs:
           mkdir D:\build-webengine
           cd /d D:\build-webengine
           call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+          if errorlevel 1 exit /b 1
           cmake --build . --parallel
+          if errorlevel 1 exit /b 1
           cmake --install .
+          if errorlevel 1 exit /b 1
 
       - name: Package DLL and Resources
         run: |
