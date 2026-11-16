@@ -32,39 +32,37 @@ jobs:
           pip install -U aqtinstall ninja
           choco install winflexbison3 gperf nodejs -y
 
-      - name: Install Qt 6.12.0 Binaries
+      - name: Discover Exact Architecture and Install Qt 6.12.0
         id: install_qt
         run: |
           $qtVer = "${{ github.event.inputs.qt_version }}"
           "qt_ver=$qtVer" >> $env:GITHUB_OUTPUT
+          $verNoDots = $qtVer -replace '\.', ''
 
-          @"
-          [aqt]
-          concurrency: 4
-          baseurl: https://berkeley.edu
+          # Fetch exact directory listing directly from Qt mirror to see real folder names
+          $url = "https://berkeley.edu"
+          Write-Host "Checking Qt repository URL: $url"
+          try {
+            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing
+            $links = $resp.Links | Where-Object { $_.href -match "qt6_$verNoDots" } | ForEach-Object { $_.href.TrimEnd('/') }
+            Write-Host "Found folders in repo: $($links -join ', ')"
+          } catch {
+            Write-Host "Could not list directory directly: $_"
+          }
 
-          [requests]
-          connection_timeout: 15
-          response_timeout: 60
-          max_retries_on_connection_error: 10
-          retry_backoff: 1.0
-          max_retries_to_retrieve_hash: 10
-          INSECURE_NOT_FOR_PRODUCTION_ignore_hash: True
+          # Try known MSVC architecture names for Qt 6.12
+          $candidates = @("win64_msvc2026_64", "win64_msvc2022_64", "win64_llvm_mingw_64")
+          foreach ($cand in $candidates) {
+            Write-Host "Trying architecture: $cand"
+            aqt install-qt windows desktop $qtVer $cand -b https://berkeley.edu -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
+            if (Test-Path "D:\Qt\$qtVer") {
+              Write-Host "Successfully installed with architecture: $cand"
+              break
+            }
+          }
 
-          [mirrors]
-          trusted_mirrors: https://berkeley.edu https://dotsrc.org https://download.qt.io
-          fallbacks: https://dotsrc.org https://jaist.ac.jp
-          "@ | Out-File -FilePath D:\aqt_settings.ini -Encoding ascii
-
-          $archList = (aqt -c D:\aqt_settings.ini list-qt windows desktop --arch $qtVer) -split '\s+'
-          Write-Host "Available architectures: $($archList -join ', ')"
-          $arch = $archList | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
-          if (-not $arch) { $arch = "win64_msvc2022_64" }
-          Write-Host "Selected Qt Architecture: $arch"
-
-          aqt -c D:\aqt_settings.ini install-qt windows desktop $qtVer $arch -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
           if (-not (Test-Path "D:\Qt\$qtVer")) {
-            throw "Failed to install Qt $qtVer!"
+            throw "Failed to install Qt $qtVer with any candidate architecture! Check 'Found folders in repo' above."
           }
           Get-ChildItem -Path "D:\Qt\$qtVer" -Depth 2
 
