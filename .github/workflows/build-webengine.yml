@@ -2,6 +2,11 @@ name: Build QtWebEngineCore with Proprietary Codecs
 
 on:
   workflow_dispatch:
+    inputs:
+      qt_version:
+        description: 'Qt version (leave as latest to auto-detect)'
+        required: true
+        default: 'latest'
 
 jobs:
   build:
@@ -27,28 +32,31 @@ jobs:
           pip install -U aqtinstall ninja
           choco install winflexbison3 gperf nodejs -y
 
-      - name: Install Qt 6.12 Binaries
+      - name: Install Latest Available Qt Binaries
+        id: install_qt
         run: |
-          $versions = (aqt list-qt windows desktop) -split '\s+'
-          $qtVer = $versions | Where-Object { $_ -like "6.12.*" } | Select-Object -Last 1
-          if (-not $qtVer) { $qtVer = "6.12.0" }
-          Write-Host "Target Qt Version: $qtVer"
+          $allVersions = (aqt list-qt windows desktop) -split '\s+' | Where-Object { $_ -match '^\d+\.\d+\.\d+$' }
+          Write-Host "Available Qt versions: $($allVersions -join ', ')"
+          
+          $qtVer = "${{ github.event.inputs.qt_version }}"
+          if ($qtVer -eq "latest" -or -not ($allVersions -contains $qtVer)) {
+            $qtVer = $allVersions | Select-Object -Last 1
+          }
+          Write-Host "Selected Qt Version: $qtVer"
+          "qt_ver=$qtVer" >> $env:GITHUB_OUTPUT
 
           $archList = (aqt list-qt windows desktop --arch $qtVer) -split '\s+'
           $arch = $archList | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
-          if (-not $arch) { $arch = "win64_msvc2022_64" }
-          Write-Host "Target Qt Architecture: $arch"
+          Write-Host "Selected Qt Architecture: $arch"
 
           aqt install-qt windows desktop $qtVer $arch -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
-          
-          if (-not (Test-Path "D:\Qt")) {
-            throw "D:\Qt was not created! Check aqt output above."
-          }
           Get-ChildItem -Path "D:\Qt" -Depth 2
 
-      - name: Clone QtWebEngine 6.12.0 Source from Git
+      - name: Clone Matching QtWebEngine Source from Git
         run: |
-          git clone --depth 1 --branch v6.12.0 https://qt.io D:\qtwebengine-src
+          $qtVer = "${{ steps.install_qt.outputs.qt_ver }}"
+          Write-Host "Cloning qtwebengine branch v$qtVer"
+          git clone --depth 1 --branch "v$qtVer" https://qt.io D:\qtwebengine-src
           cd D:\qtwebengine-src
           git submodule update --init --recursive --depth 1
 
@@ -68,13 +76,15 @@ jobs:
 
       - name: Package DLL and Resources
         run: |
+          $qtVer = "${{ steps.install_qt.outputs.qt_ver }}"
           mkdir D:\output
           copy D:\build\bin\Qt6WebEngineCore.dll D:\output\
           if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources D:\output\resources\ }
+          Write-Host "Packaged Qt $qtVer successfully."
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Qt6WebEngineCore-6.12.0-Codecs
+          name: Qt6WebEngineCore-ProprietaryCodecs
           path: D:\output\
           retention-days: 5
