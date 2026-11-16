@@ -5,7 +5,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 360
 
     steps:
@@ -29,8 +29,6 @@ jobs:
 
       - name: Install Qt 6.12.0 Binaries and WebEngine Source
         run: |
-          Write-Host "Available Qt versions:"
-          aqt list-qt windows desktop
           $archList = (aqt list-qt windows desktop --arch 6.12.0) -split '\s+'
           $arch = $archList | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
           if (-not $arch) { $arch = "win64_msvc2022_64" }
@@ -38,29 +36,26 @@ jobs:
           aqt install-qt windows desktop 6.12.0 $arch -O D:\Qt
           aqt install-src windows 6.12.0 --archives qtwebengine -O D:\Qt
 
-      - name: Setup MSVC Environment
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x64
-
-      - name: Configure QtWebEngine with Proprietary Codecs
+      - name: Configure and Build QtWebEngine with MSVC
+        shell: cmd
         run: |
-          $qtBin = (Get-ChildItem -Path "D:\Qt\6.12.0" -Filter "qt-configure-module.bat" -Recurse | Select-Object -First 1).FullName
-          Write-Host "Found configure script at: $qtBin"
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
+          echo Visual Studio Path: %VS_PATH%
+          call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
+
+          for /f "delims=" %%f in ('dir /b /s D:\Qt\6.12.0\qt-configure-module.bat') do set QT_CONF=%%f
+          echo Qt Configure Script: %QT_CONF%
+
           mkdir D:\build
-          cd D:\build
-          & $qtBin D:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
-
-      - name: Build QtWebEngine
-        run: |
-          cd D:\build
+          cd /d D:\build
+          call "%QT_CONF%" D:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
           cmake --build . --parallel
 
       - name: Package DLL and Resources
         run: |
           mkdir D:\output
           copy D:\build\bin\Qt6WebEngineCore.dll D:\output\
-          if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources D:\output\resources\ }
+          if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources C:\output\resources\ }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
