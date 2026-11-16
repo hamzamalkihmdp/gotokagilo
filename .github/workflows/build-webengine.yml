@@ -29,12 +29,13 @@ jobs:
 
       - name: Clone Qt 6.12.0 Required Modules from Official Git
         run: |
+          $ErrorActionPreference = "Stop"
           mkdir D:\qt6-src
-          cd D:\qt6-src
           $modules = @("qtbase", "qtshadertools", "qtdeclarative", "qtpositioning", "qtwebchannel", "qtwebengine")
           foreach ($mod in $modules) {
-            Write-Host "Cloning $mod (v6.12.0)..."
-            git clone --depth 1 --branch v6.12.0 "https://qt.io" "D:\qt6-src\$mod"
+            $repoUrl = "https://github.com"
+            Write-Host "Cloning $mod (v6.12.0) from $repoUrl ..."
+            git clone --depth 1 --branch v6.12.0 $repoUrl "D:\qt6-src\$($mod)"
           }
           cd D:\qt6-src\qtwebengine
           git submodule update --init --recursive --depth 1
