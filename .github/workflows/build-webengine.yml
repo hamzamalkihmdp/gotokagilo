@@ -1,0 +1,62 @@
+name: Build QtWebEngineCore with Proprietary Codecs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize Build Space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install aqtinstall and Ninja
+        run: |
+          pip install aqtinstall ninja
+
+      - name: Install Qt 6.12.0 Binaries and WebEngine Source
+        run: |
+          aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt
+          aqt install-src windows 6.12.0 --archives qtwebengine -O C:\Qt
+
+      - name: Setup MSVC Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure QtWebEngine with Proprietary Codecs
+        run: |
+          mkdir C:\build
+          cd C:\build
+          C:\Qt\6.12.0\msvc2022_64\bin\qt-configure-module.bat C:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
+
+      - name: Build QtWebEngine
+        run: |
+          cd C:\build
+          cmake --build . --parallel
+
+      - name: Package DLL and Resources
+        run: |
+          mkdir C:\output
+          copy C:\build\bin\Qt6WebEngineCore.dll C:\output\
+          xcopy /E /I C:\build\resources C:\output\resources\
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Qt6WebEngineCore-6.12.0-Codecs
+          path: C:\output\
+          retention-days: 5
