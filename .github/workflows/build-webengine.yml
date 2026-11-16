@@ -39,30 +39,32 @@ jobs:
           "qt_ver=$qtVer" >> $env:GITHUB_OUTPUT
           $verNoDots = $qtVer -replace '\.', ''
 
-          # Fetch exact directory listing directly from Qt mirror to see real folder names
-          $url = "https://berkeley.edu"
-          Write-Host "Checking Qt repository URL: $url"
-          try {
-            $resp = Invoke-WebRequest -Uri $url -UseBasicParsing
-            $links = $resp.Links | Where-Object { $_.href -match "qt6_$verNoDots" } | ForEach-Object { $_.href.TrimEnd('/') }
-            Write-Host "Found folders in repo: $($links -join ', ')"
-          } catch {
-            Write-Host "Could not list directory directly: $_"
-          }
+          # Query official Qt repository directly
+          $url = "https://qt.io"
+          Write-Host "Checking official Qt repository URL: $url"
+          $resp = Invoke-WebRequest -Uri $url -UseBasicParsing
+          $links = $resp.Links | Where-Object { $_.href -match "qt6_$verNoDots" } | ForEach-Object { $_.href.TrimEnd('/') }
+          Write-Host "Found folders in official repo: $($links -join ', ')"
 
-          # Try known MSVC architecture names for Qt 6.12
-          $candidates = @("win64_msvc2026_64", "win64_msvc2022_64", "win64_llvm_mingw_64")
-          foreach ($cand in $candidates) {
-            Write-Host "Trying architecture: $cand"
-            aqt install-qt windows desktop $qtVer $cand -b https://berkeley.edu -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
-            if (Test-Path "D:\Qt\$qtVer") {
-              Write-Host "Successfully installed with architecture: $cand"
-              break
-            }
+          # Extract exact architecture suffix (e.g. win64_msvc2022_64)
+          $archFolder = $links | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
+          if ($archFolder -match "qt6_$verNoDots\.(.+)$") {
+            $arch = $Matches[1]
+          } else {
+            $arch = "win64_msvc2022_64"
+          }
+          Write-Host "Extracted exact architecture: $arch"
+
+          # Install using reliable dotsrc mirror with official Qt checksums
+          aqt install-qt windows desktop $qtVer $arch -b https://dotsrc.org -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
+          
+          if (-not (Test-Path "D:\Qt\$qtVer")) {
+            Write-Host "Fallback to direct download.qt.io..."
+            aqt install-qt windows desktop $qtVer $arch -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
           }
 
           if (-not (Test-Path "D:\Qt\$qtVer")) {
-            throw "Failed to install Qt $qtVer with any candidate architecture! Check 'Found folders in repo' above."
+            throw "Failed to install Qt $qtVer!"
           }
           Get-ChildItem -Path "D:\Qt\$qtVer" -Depth 2
 
