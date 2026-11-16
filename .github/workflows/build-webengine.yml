@@ -27,39 +27,51 @@ jobs:
           pip install -U aqtinstall ninja
           choco install winflexbison3 gperf nodejs -y
 
-      - name: Install Qt 6.12.0 Binaries and WebEngine Source
+      - name: Install Qt 6.12 Binaries and WebEngine Source
         run: |
-          $archList = (aqt list-qt windows desktop --arch 6.12.0) -split '\s+'
+          $ErrorActionPreference = "Stop"
+          $versions = (aqt list-qt windows desktop) -split '\s+'
+          $qtVer = $versions | Where-Object { $_ -like "6.12.*" } | Select-Object -Last 1
+          if (-not $qtVer) {
+            Write-Host "All available versions: $($versions -join ', ')"
+            throw "Qt 6.12.x not found in aqt repository!"
+          }
+          Write-Host "Selected Qt Version: $qtVer"
+          
+          $archList = (aqt list-qt windows desktop --arch $qtVer) -split '\s+'
           $arch = $archList | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
-          if (-not $arch) { $arch = "win64_msvc2022_64" }
           Write-Host "Selected Qt Architecture: $arch"
-          aqt install-qt windows desktop 6.12.0 $arch -O D:\Qt
-          aqt install-src windows 6.12.0 --archives qtwebengine -O D:\Qt
+          
+          aqt install-qt windows desktop $qtVer $arch -O D:\Qt
+          aqt install-src windows $qtVer --archives qtwebengine -O D:\Qt
+          
+          Get-ChildItem -Path "D:\Qt" -Depth 2
 
       - name: Configure and Build QtWebEngine with MSVC
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
-          echo Visual Studio Path: %VS_PATH%
           call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
 
-          for /f "delims=" %%f in ('dir /b /s D:\Qt\6.12.0\qt-configure-module.bat') do set QT_CONF=%%f
+          for /f "delims=" %%f in ('dir /b /s D:\Qt\qt-configure-module.bat') do set QT_CONF=%%f
+          for /f "delims=" %%d in ('dir /b /s /ad D:\Qt\qtwebengine') do set QT_SRC=%%d
           echo Qt Configure Script: %QT_CONF%
+          echo Qt WebEngine Source: %QT_SRC%
 
           mkdir D:\build
           cd /d D:\build
-          call "%QT_CONF%" D:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
+          call "%QT_CONF%" "%QT_SRC%" -webengine-proprietary-codecs
           cmake --build . --parallel
 
       - name: Package DLL and Resources
         run: |
           mkdir D:\output
           copy D:\build\bin\Qt6WebEngineCore.dll D:\output\
-          if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources C:\output\resources\ }
+          if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources D:\output\resources\ }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Qt6WebEngineCore-6.12.0-Codecs
+          name: Qt6WebEngineCore-6.12-Codecs
           path: D:\output\
           retention-days: 5
