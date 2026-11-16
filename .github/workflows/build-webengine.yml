@@ -9,14 +9,13 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      - name: Maximize Build Space on Windows
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 10240
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
+      - name: Free Disk Space on Windows
+        run: |
+          Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\ProgramData\chocolatey\lib" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\hostedtoolcache\windows\Ruby" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\hostedtoolcache\windows\go" -Recurse -Force -ErrorAction SilentlyContinue
+          Get-PSDrive C, D
 
       - name: Setup Python
         uses: actions/setup-python@v6
@@ -32,8 +31,8 @@ jobs:
         run: |
           $arch = (aqt list-qt windows desktop --arch 6.12.0 | Select-String "msvc" | Select-Object -First 1).ToString().Trim()
           Write-Host "Detected Qt Architecture: $arch"
-          aqt install-qt windows desktop 6.12.0 $arch -O C:\Qt
-          aqt install-src windows 6.12.0 --archives qtwebengine -O C:\Qt
+          aqt install-qt windows desktop 6.12.0 $arch -O D:\Qt
+          aqt install-src windows 6.12.0 --archives qtwebengine -O D:\Qt
 
       - name: Setup MSVC Environment
         uses: ilammy/msvc-dev-cmd@v1
@@ -42,26 +41,26 @@ jobs:
 
       - name: Configure QtWebEngine with Proprietary Codecs
         run: |
-          $qtBin = (Get-ChildItem -Path "C:\Qt\6.12.0" -Filter "qt-configure-module.bat" -Recurse | Select-Object -First 1).FullName
+          $qtBin = (Get-ChildItem -Path "D:\Qt\6.12.0" -Filter "qt-configure-module.bat" -Recurse | Select-Object -First 1).FullName
           Write-Host "Found configure script at: $qtBin"
-          mkdir C:\build
-          cd C:\build
-          & $qtBin C:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
+          mkdir D:\build
+          cd D:\build
+          & $qtBin D:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
 
       - name: Build QtWebEngine
         run: |
-          cd C:\build
+          cd D:\build
           cmake --build . --parallel
 
       - name: Package DLL and Resources
         run: |
-          mkdir C:\output
-          copy C:\build\bin\Qt6WebEngineCore.dll C:\output\
-          if (Test-Path C:\build\resources) { xcopy /E /I C:\build\resources C:\output\resources\ }
+          mkdir D:\output
+          copy D:\build\bin\Qt6WebEngineCore.dll D:\output\
+          if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources D:\output\resources\ }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Qt6WebEngineCore-6.12.0-Codecs
-          path: C:\output\
+          path: D:\output\
           retention-days: 5
