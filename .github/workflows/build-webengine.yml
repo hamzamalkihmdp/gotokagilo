@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       qt_version:
-        description: 'Qt version (leave as latest to auto-detect)'
+        description: 'Qt version (e.g. 6.12.0)'
         required: true
-        default: 'latest'
+        default: '6.12.0'
 
 jobs:
   build:
@@ -32,25 +32,41 @@ jobs:
           pip install -U aqtinstall ninja
           choco install winflexbison3 gperf nodejs -y
 
-      - name: Install Latest Available Qt Binaries
+      - name: Install Qt 6.12.0 Binaries
         id: install_qt
         run: |
-          $allVersions = (aqt list-qt windows desktop) -split '\s+' | Where-Object { $_ -match '^\d+\.\d+\.\d+$' }
-          Write-Host "Available Qt versions: $($allVersions -join ', ')"
-          
           $qtVer = "${{ github.event.inputs.qt_version }}"
-          if ($qtVer -eq "latest" -or -not ($allVersions -contains $qtVer)) {
-            $qtVer = $allVersions | Select-Object -Last 1
-          }
-          Write-Host "Selected Qt Version: $qtVer"
           "qt_ver=$qtVer" >> $env:GITHUB_OUTPUT
 
-          $archList = (aqt list-qt windows desktop --arch $qtVer) -split '\s+'
+          @"
+          [aqt]
+          concurrency: 4
+          baseurl: https://berkeley.edu
+
+          [requests]
+          connection_timeout: 15
+          response_timeout: 60
+          max_retries_on_connection_error: 10
+          retry_backoff: 1.0
+          max_retries_to_retrieve_hash: 10
+          INSECURE_NOT_FOR_PRODUCTION_ignore_hash: True
+
+          [mirrors]
+          trusted_mirrors: https://berkeley.edu https://dotsrc.org https://download.qt.io
+          fallbacks: https://dotsrc.org https://jaist.ac.jp
+          "@ | Out-File -FilePath D:\aqt_settings.ini -Encoding ascii
+
+          $archList = (aqt -c D:\aqt_settings.ini list-qt windows desktop --arch $qtVer) -split '\s+'
+          Write-Host "Available architectures: $($archList -join ', ')"
           $arch = $archList | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
+          if (-not $arch) { $arch = "win64_msvc2022_64" }
           Write-Host "Selected Qt Architecture: $arch"
 
-          aqt install-qt windows desktop $qtVer $arch -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
-          Get-ChildItem -Path "D:\Qt" -Depth 2
+          aqt -c D:\aqt_settings.ini install-qt windows desktop $qtVer $arch -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
+          if (-not (Test-Path "D:\Qt\$qtVer")) {
+            throw "Failed to install Qt $qtVer!"
+          }
+          Get-ChildItem -Path "D:\Qt\$qtVer" -Depth 2
 
       - name: Clone Matching QtWebEngine Source from Git
         run: |
@@ -76,15 +92,13 @@ jobs:
 
       - name: Package DLL and Resources
         run: |
-          $qtVer = "${{ steps.install_qt.outputs.qt_ver }}"
           mkdir D:\output
           copy D:\build\bin\Qt6WebEngineCore.dll D:\output\
           if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources D:\output\resources\ }
-          Write-Host "Packaged Qt $qtVer successfully."
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Qt6WebEngineCore-ProprietaryCodecs
+          name: Qt6WebEngineCore-6.12.0-Codecs
           path: D:\output\
           retention-days: 5
