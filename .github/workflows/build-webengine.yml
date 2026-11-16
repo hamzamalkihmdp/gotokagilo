@@ -23,13 +23,16 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install aqtinstall and Ninja
+      - name: Install Build Dependencies (Ninja, Gperf, Bison, Flex)
         run: |
           pip install aqtinstall ninja
+          choco install winflexbison3 gperf nodejs -y
 
       - name: Install Qt 6.12.0 Binaries and WebEngine Source
         run: |
-          aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt
+          $arch = (aqt list-qt windows desktop --arch 6.12.0 | Select-String "msvc" | Select-Object -First 1).ToString().Trim()
+          Write-Host "Detected Qt Architecture: $arch"
+          aqt install-qt windows desktop 6.12.0 $arch -O C:\Qt
           aqt install-src windows 6.12.0 --archives qtwebengine -O C:\Qt
 
       - name: Setup MSVC Environment
@@ -39,9 +42,11 @@ jobs:
 
       - name: Configure QtWebEngine with Proprietary Codecs
         run: |
+          $qtBin = (Get-ChildItem -Path "C:\Qt\6.12.0" -Filter "qt-configure-module.bat" -Recurse | Select-Object -First 1).FullName
+          Write-Host "Found configure script at: $qtBin"
           mkdir C:\build
           cd C:\build
-          C:\Qt\6.12.0\msvc2022_64\bin\qt-configure-module.bat C:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
+          & $qtBin C:\Qt\6.12.0\Src\qtwebengine -webengine-proprietary-codecs
 
       - name: Build QtWebEngine
         run: |
@@ -52,7 +57,7 @@ jobs:
         run: |
           mkdir C:\output
           copy C:\build\bin\Qt6WebEngineCore.dll C:\output\
-          xcopy /E /I C:\build\resources C:\output\resources\
+          if (Test-Path C:\build\resources) { xcopy /E /I C:\build\resources C:\output\resources\ }
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
