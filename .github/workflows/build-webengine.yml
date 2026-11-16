@@ -1,12 +1,7 @@
-name: Build QtWebEngineCore with Proprietary Codecs
+name: Build QtWebEngineCore 6.12.0 with Proprietary Codecs
 
 on:
   workflow_dispatch:
-    inputs:
-      qt_version:
-        description: 'Qt version (e.g. 6.12.0)'
-        required: true
-        default: '6.12.0'
 
 jobs:
   build:
@@ -27,74 +22,63 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Build Dependencies (Ninja, Gperf, Bison, Flex)
+      - name: Install Build Dependencies (Ninja, Gperf, Bison, Flex, Node.js)
         run: |
-          pip install -U aqtinstall ninja
+          pip install -U ninja html5lib
           choco install winflexbison3 gperf nodejs -y
 
-      - name: Discover Exact Architecture and Install Qt 6.12.0
-        id: install_qt
+      - name: Clone Qt 6.12.0 Required Modules from Official Git
         run: |
-          $qtVer = "${{ github.event.inputs.qt_version }}"
-          "qt_ver=$qtVer" >> $env:GITHUB_OUTPUT
-          $verNoDots = $qtVer -replace '\.', ''
-
-          # Query official Qt repository directly
-          $url = "https://qt.io"
-          Write-Host "Checking official Qt repository URL: $url"
-          $resp = Invoke-WebRequest -Uri $url -UseBasicParsing
-          $links = $resp.Links | Where-Object { $_.href -match "qt6_$verNoDots" } | ForEach-Object { $_.href.TrimEnd('/') }
-          Write-Host "Found folders in official repo: $($links -join ', ')"
-
-          # Extract exact architecture suffix (e.g. win64_msvc2022_64)
-          $archFolder = $links | Where-Object { $_ -match "msvc" -and $_ -notmatch "arm" } | Select-Object -First 1
-          if ($archFolder -match "qt6_$verNoDots\.(.+)$") {
-            $arch = $Matches[1]
-          } else {
-            $arch = "win64_msvc2022_64"
+          mkdir D:\qt6-src
+          cd D:\qt6-src
+          $modules = @("qtbase", "qtshadertools", "qtdeclarative", "qtpositioning", "qtwebchannel", "qtwebengine")
+          foreach ($mod in $modules) {
+            Write-Host "Cloning $mod (v6.12.0)..."
+            git clone --depth 1 --branch v6.12.0 "https://qt.io" "D:\qt6-src\$mod"
           }
-          Write-Host "Extracted exact architecture: $arch"
-
-          # Install using reliable dotsrc mirror with official Qt checksums
-          aqt install-qt windows desktop $qtVer $arch -b https://dotsrc.org -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
-          
-          if (-not (Test-Path "D:\Qt\$qtVer")) {
-            Write-Host "Fallback to direct download.qt.io..."
-            aqt install-qt windows desktop $qtVer $arch -m qtwebengine qtpositioning qtwebchannel -O D:\Qt
-          }
-
-          if (-not (Test-Path "D:\Qt\$qtVer")) {
-            throw "Failed to install Qt $qtVer!"
-          }
-          Get-ChildItem -Path "D:\Qt\$qtVer" -Depth 2
-
-      - name: Clone Matching QtWebEngine Source from Git
-        run: |
-          $qtVer = "${{ steps.install_qt.outputs.qt_ver }}"
-          Write-Host "Cloning qtwebengine branch v$qtVer"
-          git clone --depth 1 --branch "v$qtVer" https://qt.io D:\qtwebengine-src
-          cd D:\qtwebengine-src
+          cd D:\qt6-src\qtwebengine
           git submodule update --init --recursive --depth 1
 
-      - name: Configure and Build QtWebEngine with MSVC
+      - name: Build Qt Base Modules and QtWebEngine (Proprietary Codecs)
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
           call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
 
-          for /f "delims=" %%f in ('dir /b /s D:\Qt\qt-configure-module.bat') do set QT_CONF=%%f
-          echo Qt Configure Script: %QT_CONF%
+          set PATH=C:\ProgramData\chocolatey\bin;%PATH%
 
-          mkdir D:\build
-          cd /d D:\build
-          call "%QT_CONF%" D:\qtwebengine-src -webengine-proprietary-codecs
+          REM 1. Build minimal Qt prerequisites (qtbase, qtshadertools, qtdeclarative, qtpositioning, qtwebchannel)
+          for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
+            echo ==========================================
+            echo Configuring and Building %%m
+            echo ==========================================
+            mkdir D:\build-%%m
+            cd /d D:\build-%%m
+            if "%%m"=="qtbase" (
+              cmake -G Ninja D:\qt6-src\qtbase -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=D:\Qt6-Install -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+            ) else (
+              call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\%%m -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+            )
+            cmake --build . --parallel
+            cmake --install .
+          )
+
+          REM 2. Configure and Build QtWebEngine with Proprietary Codecs
+          echo ==========================================
+          echo Configuring and Building QtWebEngine
+          echo ==========================================
+          mkdir D:\build-webengine
+          cd /d D:\build-webengine
+          call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
           cmake --build . --parallel
+          cmake --install .
 
       - name: Package DLL and Resources
         run: |
           mkdir D:\output
-          copy D:\build\bin\Qt6WebEngineCore.dll D:\output\
-          if (Test-Path D:\build\resources) { xcopy /E /I D:\build\resources D:\output\resources\ }
+          copy D:\Qt6-Install\bin\Qt6WebEngineCore.dll D:\output\
+          if (Test-Path D:\Qt6-Install\resources) { xcopy /E /I D:\Qt6-Install\resources D:\output\resources\ }
+          Get-ChildItem D:\output
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
