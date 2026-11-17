@@ -27,6 +27,13 @@ jobs:
           pip install -U ninja html5lib
           choco install winflexbison3 gperf nodejs -y
 
+      - name: Cache Prebuilt Qt Base Modules
+        id: cache-qtbase
+        uses: actions/cache@v4
+        with:
+          path: D:\Qt6-Install
+          key: qt6-base-6.12.0-win64-v1
+
       - name: Clone Qt 6.12.0 Required Modules from Official Git
         shell: cmd
         run: |
@@ -35,10 +42,12 @@ jobs:
           set HOST=github.com
           set ORG=qt
           
-          for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
-            echo Cloning %%m v6.12.0 ...
-            git clone --depth 1 --branch v6.12.0 %PROTO%%HOST%/%ORG%/%%m.git D:\qt6-src\%%m
-            if errorlevel 1 exit /b 1
+          if not exist "D:\Qt6-Install\bin\qt-configure-module.bat" (
+            for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
+              echo Cloning %%m v6.12.0 ...
+              git clone --depth 1 --branch v6.12.0 %PROTO%%HOST%/%ORG%/%%m.git D:\qt6-src\%%m
+              if errorlevel 1 exit /b 1
+            )
           )
           
           echo Cloning qtwebengine branch 6.12 ...
@@ -52,20 +61,14 @@ jobs:
           git submodule update --init --recursive --depth 1
           if errorlevel 1 exit /b 1
 
-      - name: Build Qt Base Modules and QtWebEngine (Proprietary Codecs)
+      - name: Build Qt Base Modules (If Not Cached)
+        if: steps.cache-qtbase.outputs.cache-hit != 'true'
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
           call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
-
-          REM Put Chocolatey at the END of PATH so Visual Studio / Python Ninja is used first
           set PATH=%PATH%;C:\ProgramData\chocolatey\bin
 
-          where ninja
-          ninja --version
-          where cl
-
-          REM 1. Build minimal Qt prerequisites (qtbase, qtshadertools, qtdeclarative, qtpositioning, qtwebchannel)
           for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
             echo ==========================================
             echo Configuring and Building %%m
@@ -73,7 +76,7 @@ jobs:
             mkdir D:\build-%%m
             cd /d D:\build-%%m
             if "%%m"=="qtbase" (
-              cmake -G Ninja D:\qt6-src\qtbase -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=D:\Qt6-Install -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+              cmake -G Ninja D:\qt6-src\qtbase -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=D:\Qt6-Install -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DBUILD_WITH_PCH=ON
             ) else (
               call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\%%m -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
             )
@@ -84,24 +87,33 @@ jobs:
             if errorlevel 1 exit /b 1
           )
 
-          REM 2. Configure and Build QtWebEngine with Proprietary Codecs
-          echo ==========================================
-          echo Configuring and Building QtWebEngine
-          echo ==========================================
+      - name: Build QtWebEngineCore Only (Fast Release Build)
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
+          call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
+          set PATH=%PATH%;C:\ProgramData\chocolatey\bin
+
           mkdir D:\build-webengine
           cd /d D:\build-webengine
-          call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
+          
+          REM Build ONLY WebEngineCore target with proprietary codecs and disabled extra features to save 90+ minutes
+          call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF
           if errorlevel 1 exit /b 1
-          cmake --build . --parallel
-          if errorlevel 1 exit /b 1
-          cmake --install .
+          
+          REM Target specifically WebEngineCore DLL instead of building all auxiliary tools
+          cmake --build . --target WebEngineCore --parallel
           if errorlevel 1 exit /b 1
 
       - name: Package DLL and Resources
         run: |
           mkdir D:\output
-          copy D:\Qt6-Install\bin\Qt6WebEngineCore.dll D:\output\
-          if (Test-Path D:\Qt6-Install\resources) { xcopy /E /I D:\Qt6-Install\resources D:\output\resources\ }
+          $dll = (Get-ChildItem -Path "D:\build-webengine" -Filter "Qt6WebEngineCore.dll" -Recurse | Select-Object -First 1).FullName
+          Write-Host "Found DLL at: $dll"
+          copy $dll D:\output\
+          
+          $resDir = (Get-ChildItem -Path "D:\build-webengine" -Filter "resources" -Directory -Recurse | Select-Object -First 1).FullName
+          if ($resDir) { xcopy /E /I $resDir D:\output\resources\ }
           Get-ChildItem D:\output
 
       - name: Upload Artifact
