@@ -34,13 +34,27 @@ jobs:
           set PROTO=https://
           set HOST=github.com
           set ORG=qt
-          for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel qtwebengine) do (
+          
+          REM Clone standard Qt 6.12.0 modules
+          for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
             echo Cloning %%m v6.12.0 ...
             git clone --depth 1 --branch v6.12.0 %PROTO%%HOST%/%ORG%/%%m.git D:\qt6-src\%%m
             if errorlevel 1 exit /b 1
           )
+          
+          REM Clone qtwebengine using branch 6.12 (since WebEngine uses Chromium-based tags)
+          echo Cloning qtwebengine branch 6.12 ...
+          git clone --depth 1 --branch 6.12 %PROTO%%HOST%/%ORG%/qtwebengine.git D:\qt6-src\qtwebengine
+          if errorlevel 1 (
+            echo Branch 6.12 failed, listing available tags/branches and falling back to dev...
+            git ls-remote --heads --tags %PROTO%%HOST%/%ORG%/qtwebengine.git | findstr "6."
+            git clone --depth 1 --branch dev %PROTO%%HOST%/%ORG%/qtwebengine.git D:\qt6-src\qtwebengine
+            if errorlevel 1 exit /b 1
+          )
+          
           cd /d D:\qt6-src\qtwebengine
           git submodule update --init --recursive --depth 1
+          if errorlevel 1 exit /b 1
 
       - name: Build Qt Base Modules and QtWebEngine (Proprietary Codecs)
         shell: cmd
