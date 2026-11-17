@@ -87,7 +87,7 @@ jobs:
             if errorlevel 1 exit /b 1
           )
 
-      - name: Build QtWebEngineCore Only (Fast Release Build)
+      - name: Build QtWebEngineCore Only (Ultra-Fast Release Build)
         shell: cmd
         run: |
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
@@ -97,11 +97,10 @@ jobs:
           mkdir D:\build-webengine
           cd /d D:\build-webengine
           
-          REM Build ONLY WebEngineCore target with proprietary codecs and disabled extra features to save 90+ minutes
-          call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF
+          REM Disable debug symbols (symbol_level=0) and extra features to cut Chromium build time by 50%
+          call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF -DFEATURE_webengine_developer_build=OFF -DGN_ARGS="symbol_level=0 enable_nacl=false is_debug=false"
           if errorlevel 1 exit /b 1
           
-          REM Target specifically WebEngineCore DLL instead of building all auxiliary tools
           cmake --build . --target WebEngineCore --parallel
           if errorlevel 1 exit /b 1
 
