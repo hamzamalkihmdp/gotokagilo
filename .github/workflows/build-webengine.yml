@@ -31,9 +31,12 @@ jobs:
         shell: cmd
         run: |
           mkdir D:\qt6-src
+          set PROTO=https://
+          set HOST=github.com
+          set ORG=qt
           for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel qtwebengine) do (
             echo Cloning %%m v6.12.0 ...
-            git clone --depth 1 --branch v6.12.0 https://github.com D:\qt6-src\%%m
+            git clone --depth 1 --branch v6.12.0 %PROTO%%HOST%/%ORG%/%%m.git D:\qt6-src\%%m
             if errorlevel 1 exit /b 1
           )
           cd /d D:\qt6-src\qtwebengine
