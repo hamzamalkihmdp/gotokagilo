@@ -35,19 +35,15 @@ jobs:
           set HOST=github.com
           set ORG=qt
           
-          REM Clone standard Qt 6.12.0 modules
           for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
             echo Cloning %%m v6.12.0 ...
             git clone --depth 1 --branch v6.12.0 %PROTO%%HOST%/%ORG%/%%m.git D:\qt6-src\%%m
             if errorlevel 1 exit /b 1
           )
           
-          REM Clone qtwebengine using branch 6.12 (since WebEngine uses Chromium-based tags)
           echo Cloning qtwebengine branch 6.12 ...
           git clone --depth 1 --branch 6.12 %PROTO%%HOST%/%ORG%/qtwebengine.git D:\qt6-src\qtwebengine
           if errorlevel 1 (
-            echo Branch 6.12 failed, listing available tags/branches and falling back to dev...
-            git ls-remote --heads --tags %PROTO%%HOST%/%ORG%/qtwebengine.git | findstr "6."
             git clone --depth 1 --branch dev %PROTO%%HOST%/%ORG%/qtwebengine.git D:\qt6-src\qtwebengine
             if errorlevel 1 exit /b 1
           )
@@ -62,7 +58,12 @@ jobs:
           for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
           call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
 
-          set PATH=C:\ProgramData\chocolatey\bin;%PATH%
+          REM Put Chocolatey at the END of PATH so Visual Studio / Python Ninja is used first
+          set PATH=%PATH%;C:\ProgramData\chocolatey\bin
+
+          where ninja
+          ninja --version
+          where cl
 
           REM 1. Build minimal Qt prerequisites (qtbase, qtshadertools, qtdeclarative, qtpositioning, qtwebchannel)
           for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
