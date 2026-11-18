@@ -101,6 +101,9 @@ jobs:
           
           if (-not (Test-Path "D:\build-webengine")) {
             New-Item -ItemType Directory -Path "D:\build-webengine" | Out-Null
+          } else {
+            # Remove any potentially corrupted .pch files from previous interrupted session
+            Get-ChildItem -Path "D:\build-webengine" -Filter "*.pch" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
           }
 
           $batContent = @"
@@ -112,7 +115,7 @@ jobs:
             call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF -DFEATURE_webengine_developer_build=OFF -DGN_ARGS="symbol_level=0 enable_nacl=false is_debug=false"
             if errorlevel 1 exit /b 1
           )
-          cmake --build . --target WebEngineCore --parallel
+          cmake --build . --target WebEngineCore -j 2
           exit /b %errorlevel%
           "@
           Set-Content -Path "D:\run_build.bat" -Value $batContent
