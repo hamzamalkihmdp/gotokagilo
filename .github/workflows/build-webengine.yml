@@ -34,6 +34,15 @@ jobs:
           path: D:\Qt6-Install
           key: qt6-base-6.12.0-win64-v1
 
+      - name: Restore Partial WebEngine Build Cache
+        id: cache-webengine
+        uses: actions/cache/restore@v4
+        with:
+          path: D:\build-webengine
+          key: qt6-webengine-build-6.12.0-${{ github.run_id }}
+          restore-keys: |
+            qt6-webengine-build-6.12.0-
+
       - name: Clone Qt 6.12.0 Required Modules from Official Git
         shell: cmd
         run: |
@@ -70,9 +79,6 @@ jobs:
           set PATH=%PATH%;C:\ProgramData\chocolatey\bin
 
           for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
-            echo ==========================================
-            echo Configuring and Building %%m
-            echo ==========================================
             mkdir D:\build-%%m
             cd /d D:\build-%%m
             if "%%m"=="qtbase" (
@@ -87,24 +93,63 @@ jobs:
             if errorlevel 1 exit /b 1
           )
 
-      - name: Build QtWebEngineCore Only (Ultra-Fast Release Build)
-        shell: cmd
+      - name: Build QtWebEngineCore (With Safe 5-Hour Checkpoint)
+        id: build-step
+        shell: pwsh
         run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
-          call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
-          set PATH=%PATH%;C:\ProgramData\chocolatey\bin
+          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          
+          if (-not (Test-Path "D:\build-webengine")) {
+            New-Item -ItemType Directory -Path "D:\build-webengine" | Out-Null
+          }
 
-          mkdir D:\build-webengine
+          $batContent = @"
+          @echo off
+          call "$vsPath\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
+          set PATH=%PATH%;C:\ProgramData\chocolatey\bin
           cd /d D:\build-webengine
-          
-          REM Disable debug symbols (symbol_level=0) and extra features to cut Chromium build time by 50%
-          call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF -DFEATURE_webengine_developer_build=OFF -DGN_ARGS="symbol_level=0 enable_nacl=false is_debug=false"
-          if errorlevel 1 exit /b 1
-          
+          if not exist "build.ninja" (
+            call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF -DFEATURE_webengine_developer_build=OFF -DGN_ARGS="symbol_level=0 enable_nacl=false is_debug=false"
+            if errorlevel 1 exit /b 1
+          )
           cmake --build . --target WebEngineCore --parallel
-          if errorlevel 1 exit /b 1
+          exit /b %errorlevel%
+          "@
+          Set-Content -Path "D:\run_build.bat" -Value $batContent
+
+          # Start build with a 305-minute (5h 5m) safety timeout so we can save cache before GitHub's 6h hard kill
+          $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c D:\run_build.bat" -NoNewWindow -PassThru
+          $completed = $proc.WaitForExit(305 * 60 * 1000)
+
+          if (-not $completed) {
+            Write-Host "Reached 5-hour checkpoint! Stopping compiler cleanly to save progress to Cache..."
+            taskkill /F /T /PID $proc.Id | Out-Null
+            echo "BUILD_COMPLETE=false" >> $env:GITHUB_ENV
+          } elseif ($proc.ExitCode -eq 0) {
+            Write-Host "Build completed 100%!"
+            echo "BUILD_COMPLETE=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Error "Build failed with exit code $($proc.ExitCode)"
+            exit $proc.ExitCode
+          }
+
+      - name: Save WebEngine Build Progress to Cache
+        if: env.BUILD_COMPLETE == 'false'
+        uses: actions/cache/save@v4
+        with:
+          path: D:\build-webengine
+          key: qt6-webengine-build-6.12.0-${{ github.run_id }}
+
+      - name: Notify to Re-run for Final 15%
+        if: env.BUILD_COMPLETE == 'false'
+        run: |
+          Write-Host "================================================================="
+          Write-Host "85% OF BUILD SAVED TO CACHE! Click 'Re-run all jobs' to finish!"
+          Write-Host "================================================================="
+          exit 1
 
       - name: Package DLL and Resources
+        if: env.BUILD_COMPLETE == 'true'
         run: |
           mkdir D:\output
           $dll = (Get-ChildItem -Path "D:\build-webengine" -Filter "Qt6WebEngineCore.dll" -Recurse | Select-Object -First 1).FullName
@@ -116,6 +161,7 @@ jobs:
           Get-ChildItem D:\output
 
       - name: Upload Artifact
+        if: env.BUILD_COMPLETE == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Qt6WebEngineCore-6.12.0-Codecs
