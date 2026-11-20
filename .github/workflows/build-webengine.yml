@@ -1,172 +1,93 @@
-name: Build QtWebEngineCore 6.12.0 with Proprietary Codecs
+name: Build Qt6WebEngineCore (6.12.0 + Codecs)
 
 on:
+  push:
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: windows-2022
+    runs-on: windows-latest
     timeout-minutes: 360
 
     steps:
-      - name: Free Disk Space on Windows
+      - name: Maximize Disk Space
+        shell: pwsh
         run: |
-          Remove-Item -Path "C:\Android" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\ProgramData\chocolatey\lib" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\hostedtoolcache\windows\Ruby" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "C:\hostedtoolcache\windows\go" -Recurse -Force -ErrorAction SilentlyContinue
-          Get-PSDrive C, D
+          Remove-Item -Path "C:\ProgramData\Microsoft\AndroidNDK*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\hostedtoolcache\windows\Java*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\hostedtoolcache\windows\go*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\hostedtoolcache\windows\Ruby*" -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Setup Python
-        uses: actions/setup-python@v6
+      - name: Setup MSVC Environment
+        uses: ilammy/msvc-dev-cmd@v1
         with:
-          python-version: '3.12'
+          arch: x64
 
-      - name: Install Build Dependencies (Ninja, Gperf, Bison, Flex, Node.js)
+      - name: Install Ninja & Tools
+        shell: pwsh
         run: |
-          pip install -U ninja html5lib
-          choco install winflexbison3 gperf nodejs -y
+          choco install ninja python3 nodejs -y --no-progress
+          python -m pip install html5lib
 
-      - name: Cache Prebuilt Qt Base Modules
-        id: cache-qtbase
+      - name: Download Qt 6.12.0 Base & WebEngine
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.12.0'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtpositioning qtwebchannel qtwebsockets'
+          install-deps: 'true'
+
+      - name: Clone QtWebEngine 6.12.0 Source
+        shell: pwsh
+        run: |
+          if (!(Test-Path "qtwebengine")) {
+            git clone --branch 6.12.0 --depth 1 https://qt.io
+            cd qtwebengine
+            git submodule update --init --depth 1
+          }
+
+      - name: Restore Build Cache
+        id: cache-build
         uses: actions/cache@v4
         with:
-          path: D:\Qt6-Install
-          key: qt6-base-6.12.0-win64-v1
-
-      - name: Restore Partial WebEngine Build Cache
-        id: cache-webengine
-        uses: actions/cache/restore@v4
-        with:
-          path: D:\build-webengine
-          key: qt6-webengine-build-6.12.0-${{ github.run_id }}
+          path: build
+          key: qt6-webengine-build-6.12.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             qt6-webengine-build-6.12.0-
 
-      - name: Clone Qt 6.12.0 Required Modules from Official Git
-        shell: cmd
-        run: |
-          mkdir D:\qt6-src
-          set PROTO=https://
-          set HOST=github.com
-          set ORG=qt
-          
-          if not exist "D:\Qt6-Install\bin\qt-configure-module.bat" (
-            for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
-              echo Cloning %%m v6.12.0 ...
-              git clone --depth 1 --branch v6.12.0 %PROTO%%HOST%/%ORG%/%%m.git D:\qt6-src\%%m
-              if errorlevel 1 exit /b 1
-            )
-          )
-          
-          echo Cloning qtwebengine branch 6.12 ...
-          git clone --depth 1 --branch 6.12 %PROTO%%HOST%/%ORG%/qtwebengine.git D:\qt6-src\qtwebengine
-          if errorlevel 1 (
-            git clone --depth 1 --branch dev %PROTO%%HOST%/%ORG%/qtwebengine.git D:\qt6-src\qtwebengine
-            if errorlevel 1 exit /b 1
-          )
-          
-          cd /d D:\qt6-src\qtwebengine
-          git submodule update --init --recursive --depth 1
-          if errorlevel 1 exit /b 1
-
-      - name: Build Qt Base Modules (If Not Cached)
-        if: steps.cache-qtbase.outputs.cache-hit != 'true'
-        shell: cmd
-        run: |
-          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VS_PATH=%%i
-          call "%VS_PATH%\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
-          set PATH=%PATH%;C:\ProgramData\chocolatey\bin
-
-          for %%m in (qtbase qtshadertools qtdeclarative qtpositioning qtwebchannel) do (
-            mkdir D:\build-%%m
-            cd /d D:\build-%%m
-            if "%%m"=="qtbase" (
-              cmake -G Ninja D:\qt6-src\qtbase -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=D:\Qt6-Install -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DBUILD_WITH_PCH=ON
-            ) else (
-              call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\%%m -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF
-            )
-            if errorlevel 1 exit /b 1
-            cmake --build . --parallel
-            if errorlevel 1 exit /b 1
-            cmake --install .
-            if errorlevel 1 exit /b 1
-          )
-
-      - name: Build QtWebEngineCore (With Safe 5-Hour Checkpoint)
-        id: build-step
+      - name: Configure QtWebEngine (With Codecs)
+        if: steps.cache-build.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          
-          if (-not (Test-Path "D:\build-webengine")) {
-            New-Item -ItemType Directory -Path "D:\build-webengine" | Out-Null
-          } else {
-            # Remove any potentially corrupted .pch files from previous interrupted session
-            Get-ChildItem -Path "D:\build-webengine" -Filter "*.pch" -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
-          }
+          cmake -S qtwebengine -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_PREFIX_PATH="$env:Qt6_DIR" `
+            -DFEATURE_webengine_proprietary_codecs=ON `
+            -DFEATURE_webengine_full_debug_info=OFF `
+            -DQT_BUILD_EXAMPLES=OFF `
+            -DQT_BUILD_TESTS=OFF
 
-          $batContent = @"
-          @echo off
-          call "$vsPath\Common7\Tools\VsDevCmd.bat" -arch=amd64 -host_arch=amd64
-          set PATH=%PATH%;C:\ProgramData\chocolatey\bin
-          cd /d D:\build-webengine
-          if not exist "build.ninja" (
-            call D:\Qt6-Install\bin\qt-configure-module.bat D:\qt6-src\qtwebengine -webengine-proprietary-codecs -no-webengine-spellchecker -no-webengine-printing-and-pdf -- -DQT_BUILD_EXAMPLES=OFF -DQT_BUILD_TESTS=OFF -DFEATURE_webengine_quick=OFF -DFEATURE_webengine_widgets=OFF -DFEATURE_webengine_developer_build=OFF -DGN_ARGS="symbol_level=0 enable_nacl=false is_debug=false"
-            if errorlevel 1 exit /b 1
-          )
-          cmake --build . --target WebEngineCore -j 2
-          exit /b %errorlevel%
-          "@
-          Set-Content -Path "D:\run_build.bat" -Value $batContent
-
-          # Start build with a 305-minute (5h 5m) safety timeout so we can save cache before GitHub's 6h hard kill
-          $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c D:\run_build.bat" -NoNewWindow -PassThru
-          $completed = $proc.WaitForExit(305 * 60 * 1000)
-
-          if (-not $completed) {
-            Write-Host "Reached 5-hour checkpoint! Stopping compiler cleanly to save progress to Cache..."
-            taskkill /F /T /PID $proc.Id | Out-Null
-            echo "BUILD_COMPLETE=false" >> $env:GITHUB_ENV
-          } elseif ($proc.ExitCode -eq 0) {
-            Write-Host "Build completed 100%!"
-            echo "BUILD_COMPLETE=true" >> $env:GITHUB_ENV
-          } else {
-            Write-Error "Build failed with exit code $($proc.ExitCode)"
-            exit $proc.ExitCode
-          }
-
-      - name: Save WebEngine Build Progress to Cache
-        if: env.BUILD_COMPLETE == 'false'
-        uses: actions/cache/save@v4
-        with:
-          path: D:\build-webengine
-          key: qt6-webengine-build-6.12.0-${{ github.run_id }}
-
-      - name: Notify to Re-run for Final 15%
-        if: env.BUILD_COMPLETE == 'false'
+      - name: Build QtWebEngineCore (Fast 4-Core + Safe 5-Hour Checkpoint)
+        timeout-minutes: 300
+        continue-on-error: true
+        shell: pwsh
         run: |
-          Write-Host "================================================================="
-          Write-Host "85% OF BUILD SAVED TO CACHE! Click 'Re-run all jobs' to finish!"
-          Write-Host "================================================================="
-          exit 1
+          cmake --build build --target QtWebEngineCore --parallel 4
 
-      - name: Package DLL and Resources
-        if: env.BUILD_COMPLETE == 'true'
+      - name: Clean Temporary Files Before Caching
+        shell: pwsh
         run: |
-          mkdir D:\output
-          $dll = (Get-ChildItem -Path "D:\build-webengine" -Filter "Qt6WebEngineCore.dll" -Recurse | Select-Object -First 1).FullName
-          Write-Host "Found DLL at: $dll"
-          copy $dll D:\output\
-          
-          $resDir = (Get-ChildItem -Path "D:\build-webengine" -Filter "resources" -Directory -Recurse | Select-Object -First 1).FullName
-          if ($resDir) { xcopy /E /I $resDir D:\output\resources\ }
-          Get-ChildItem D:\output
+          Get-ChildItem -Path build -Include *.pdb,*.ilk -Recurse | Remove-Item -Force -ErrorAction SilentlyContinue
 
-      - name: Upload Artifact
-        if: env.BUILD_COMPLETE == 'true'
+      - name: Check & Upload Qt6WebEngineCore.dll
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Qt6WebEngineCore-6.12.0-Codecs
-          path: D:\output\
-          retention-days: 5
+          path: |
+            build/bin/Qt6WebEngineCore.dll
+            build/lib/Qt6WebEngineCore.lib
+          if-no-files-found: ignore
