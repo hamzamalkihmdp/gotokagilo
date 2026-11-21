@@ -28,7 +28,8 @@ jobs:
         shell: pwsh
         run: |
           choco install ninja nodejs gperf winflexbison3 -y --no-progress
-          refreshenv
+          Copy-Item "C:\ProgramData\chocolatey\bin\win_bison.exe" "C:\ProgramData\chocolatey\bin\bison.exe" -Force -ErrorAction SilentlyContinue
+          Copy-Item "C:\ProgramData\chocolatey\bin\win_flex.exe" "C:\ProgramData\chocolatey\bin\flex.exe" -Force -ErrorAction SilentlyContinue
           python -m pip install --upgrade pip html5lib
 
       - name: Checkout Latest aqtinstall
@@ -58,9 +59,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build
-          key: qt6-webengine-build-v3-6.12.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: qt6-webengine-build-v4-6.12.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            qt6-webengine-build-v3-6.12.0-
+            qt6-webengine-build-v4-6.12.0-
 
       - name: Configure QtWebEngine (With Codecs)
         if: steps.cache-build.outputs.cache-hit != 'true'
@@ -69,17 +70,11 @@ jobs:
           $env:PATH = "C:\ProgramData\chocolatey\bin;" + $env:PATH
           C:\Qt\6.12.0\msvc2022_64\bin\qt-cmake.bat -S qtwebengine -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
+            -DQT_FEATURE_webengine_core=ON `
             -DFEATURE_webengine_proprietary_codecs=ON `
             -DFEATURE_webengine_full_debug_info=OFF `
             -DQT_BUILD_EXAMPLES=OFF `
             -DQT_BUILD_TESTS=OFF
-          
-          # التأكد من أن WebEngineCore مفعّل وإلا إيقاف البناء فوراً لعرض السبب
-          $targets = cmake --build build --target help
-          if ($targets -notmatch "WebEngineCore") {
-            Write-Error "WebEngineCore was disabled during configure! Check the CMake summary above for missing dependencies."
-            exit 1
-          }
 
       - name: Build QtWebEngineCore (Fast 4-Core + Safe 5-Hour Checkpoint)
         timeout-minutes: 300
