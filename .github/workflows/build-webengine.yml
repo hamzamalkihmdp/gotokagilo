@@ -44,11 +44,11 @@ jobs:
           echo "Qt6_DIR=C:\Qt\6.12.0\msvc2022_64" >> $env:GITHUB_ENV
           echo "C:\Qt\6.12.0\msvc2022_64\bin" >> $env:GITHUB_PATH
 
-      - name: Checkout QtWebEngine 6.12.0 Source
+      - name: Checkout QtWebEngine 6.12 Source
         uses: actions/checkout@v4
         with:
           repository: qt/qtwebengine
-          ref: 'v6.12.0'
+          ref: '6.12'
           path: qtwebengine
           submodules: true
 
