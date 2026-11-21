@@ -28,25 +28,29 @@ jobs:
         shell: pwsh
         run: |
           choco install ninja python3 nodejs -y --no-progress
-          python -m pip install html5lib
+          python -m pip install --upgrade pip html5lib
 
-      - name: Install Qt 6.12.0 via aqtinstall (Fixed Master Zip)
+      - name: Checkout Latest aqtinstall
+        uses: actions/checkout@v4
+        with:
+          repository: miurahr/aqtinstall
+          path: aqt-src
+
+      - name: Install Qt 6.12.0
         shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install "https://github.com"
-          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt -m qtpositioning qtwebchannel qtwebsockets --base https://download.qt.io
+          python -m pip install ./aqt-src
+          python -m aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt -m qtpositioning qtwebchannel qtwebsockets
           echo "Qt6_DIR=C:\Qt\6.12.0\msvc2022_64" >> $env:GITHUB_ENV
           echo "C:\Qt\6.12.0\msvc2022_64\bin" >> $env:GITHUB_PATH
 
-      - name: Clone QtWebEngine 6.12.0 Source
-        shell: pwsh
-        run: |
-          if (!(Test-Path "qtwebengine")) {
-            git clone --branch 6.12.0 --depth 1 https://qt.io
-            cd qtwebengine
-            git submodule update --init --depth 1
-          }
+      - name: Checkout QtWebEngine 6.12.0 Source
+        uses: actions/checkout@v4
+        with:
+          repository: qt/qtwebengine
+          ref: '6.12.0'
+          path: qtwebengine
+          submodules: true
 
       - name: Restore Build Cache
         id: cache-build
