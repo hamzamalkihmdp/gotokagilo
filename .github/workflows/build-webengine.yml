@@ -24,12 +24,17 @@ jobs:
         with:
           arch: x64
 
-      - name: Install Ninja, Bison, Flex, GPerf & Python Tools
+      - name: Install Ninja, Bison, Flex, GPerf & Python html5lib
         shell: pwsh
         run: |
           choco install ninja nodejs gperf winflexbison3 -y --no-progress
           Copy-Item "C:\ProgramData\chocolatey\bin\win_bison.exe" "C:\ProgramData\chocolatey\bin\bison.exe" -Force -ErrorAction SilentlyContinue
           Copy-Item "C:\ProgramData\chocolatey\bin\win_flex.exe" "C:\ProgramData\chocolatey\bin\flex.exe" -Force -ErrorAction SilentlyContinue
+          
+          # تثبيت html5lib على جميع نسخ Python الموجودة في النظام لضمان عدم حدوث تعارض
+          Get-ChildItem "C:\hostedtoolcache\windows\Python\*\x64\python.exe" | ForEach-Object {
+            & $_.FullName -m pip install --upgrade pip html5lib
+          }
           python -m pip install --upgrade pip html5lib
 
       - name: Checkout Latest aqtinstall
@@ -59,18 +64,19 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build
-          key: qt6-webengine-build-v4-6.12.0-${{ github.run_id }}-${{ github.run_attempt }}
+          key: qt6-webengine-build-v5-6.12.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            qt6-webengine-build-v4-6.12.0-
+            qt6-webengine-build-v5-6.12.0-
 
       - name: Configure QtWebEngine (With Codecs)
         if: steps.cache-build.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           $env:PATH = "C:\ProgramData\chocolatey\bin;" + $env:PATH
+          $py3 = (Get-Command python3.exe).Source
           C:\Qt\6.12.0\msvc2022_64\bin\qt-cmake.bat -S qtwebengine -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            -DQT_FEATURE_webengine_core=ON `
+            -DPython3_EXECUTABLE="$py3" `
             -DFEATURE_webengine_proprietary_codecs=ON `
             -DFEATURE_webengine_full_debug_info=OFF `
             -DQT_BUILD_EXAMPLES=OFF `
@@ -81,7 +87,7 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          cmake --build build --parallel 4
+          cmake --build build --target WebEngineCore --parallel 4
 
       - name: Clean Temporary Files Before Caching
         shell: pwsh
